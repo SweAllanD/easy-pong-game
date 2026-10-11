@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Easy Pong</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --paddle: #f8fafc;
+      --ball: #fbbf24;
+      --line: rgba(255,255,255,0.15);
+      --text: #e5e7eb;
+      --accent: #34d399;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      overflow: hidden;
+    }
+
+    body {
+      display: grid;
+      place-items: center;
+      touch-action: none;
+    }
+
+    .game-wrap {
+      width: min(96vw, 900px);
+      height: min(84vh, 620px);
+      position: relative;
+      background: linear-gradient(180deg, #0f172a, #111827);
+      border: 2px solid rgba(255,255,255,0.12);
+      border-radius: 18px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+      overflow: hidden;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: rgba(15, 23, 42, 0.9);
+    }
+
+    .hud {
+      position: absolute;
+      inset: 14px 0 auto 0;
+      display: flex;
+      justify-content: center;
+      pointer-events: none;
+    }
+
+    .score {
+      font-size: clamp(18px, 3vw, 30px);
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      color: var(--text);
+      text-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+
+    .controls {
+      position: absolute;
+      inset: auto 0 14px 0;
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      pointer-events: none;
+    }
+
+    .btn {
+      pointer-events: auto;
+      border: none;
+      background: rgba(255,255,255,0.08);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 10px 16px;
+      font-size: 14px;
+      font-weight: 700;
+      min-width: 120px;
+      backdrop-filter: blur(4px);
+      box-shadow: 0 8px 18px rgba(0,0,0,0.2);
+    }
+
+    .btn:active {
+      transform: translateY(1px) scale(0.98);
+    }
+
+    .btn.primary {
+      background: rgba(52, 211, 153, 0.18);
+      color: #d1fae5;
+      border: 1px solid rgba(52, 211, 153, 0.5);
+    }
+
+    @media (max-width: 480px) {
+      .game-wrap {
+        width: 100vw;
+        height: 100vh;
+        border-radius: 0;
+        border: none;
+      }
+      .controls {
+        bottom: calc(14px + env(safe-area-inset-bottom));
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="game-wrap">
+    <div class="hud">
+      <div class="score" id="score">0 : 0</div>
+    </div>
+
+    <canvas id="gameCanvas" width="900" height="600"></canvas>
+
+    <div class="controls">
+      <button class="btn primary" id="restartBtn">Restart</button>
+      <button class="btn" id="pauseBtn">Pause</button>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+    const scoreEl = document.getElementById("score");
+    const restartBtn = document.getElementById("restartBtn");
+    const pauseBtn = document.getElementById("pauseBtn");
+
+    const state = {
+      width: canvas.width,
+      height: canvas.height,
+      running: true,
+      paused: false,
+      lastTime: 0,
+      tick: 0,
+      scoreLeft: 0,
+      scoreRight: 0
+    };
+
+    const paddleHeight = 118;
+    const paddleWidth = 14;
+    const paddleSpeed = 520;
+
+    const leftPaddle = {
+      x: 24,
+      y: canvas.height / 2 - paddleHeight / 2,
+      width: paddleWidth,
+      height: paddleHeight,
+      speed: paddleSpeed,
+      direction: 0
+    };
+
+    const rightPaddle = {
+      x: canvas.width - 24 - paddleWidth,
+      y: canvas.height / 2 - paddleHeight / 2,
+      width: paddleWidth,
+      height: paddleHeight,
+      speed: paddleSpeed,
+      direction: 0
+    };
+
+    const ball = {
+      x: canvas.width / 2,
+      y: canvas.height / 2,
+      radius: 10,
+      vx: 320,
+      vy: 220,
+      speed: 360
+    };
+
+    const input = {
+      leftUp: false,
+      leftDown: false,
+      rightUp: false,
+      rightDown: false,
+      touchY: null
+    };
+
+    function clamp(value, min, max) {
+      return Math.min(Math.max(value, min), max);
+    }
+
+    function resetBall(direction = 1) {
+      ball.x = canvas.width / 2;
+      ball.y = canvas.height / 2;
+      const angle = (Math.random() * 1.4 - 0.7);
+      const speed = ball.speed;
+      ball.vx = direction * speed * Math.cos(angle + (Math.PI / 4));
+      ball.vy = speed * Math.sin(angle + (Math.PI / 4));
+    }
+
+    function updateScore() {
+      scoreEl.textContent = `${state.scoreLeft} : ${state.scoreRight}`;
+    }
+
+    function updatePaddles(dt) {
+      const moveLeft = (input.leftDown ? 1 : 0) - (input.leftUp ? 1 : 0);
+      const moveRight = (input.rightDown ? 1 : 0) - (input.rightUp ? 1 : 0);
+
+      leftPaddle.direction = moveLeft;
+      rightPaddle.direction = moveRight;
+
+      leftPaddle.y += moveLeft * leftPaddle.speed * dt;
+      rightPaddle.y += moveRight * rightPaddle.speed * dt;
+
+      leftPaddle.y = clamp(leftPaddle.y, 0, canvas.height - leftPaddle.height);
+      rightPaddle.y = clamp(rightPaddle.y, 0, canvas.height - rightPaddle.height);
+    }
+
+    function updateBall(dt) {
+      ball.x += ball.vx * dt;
+      ball.y += ball.vy * dt;
+
+      if (ball.y - ball.radius <= 0 || ball.y + ball.radius >= canvas.height) {
+        ball.vy *= -1;
+        ball.y = clamp(ball.y, ball.radius, canvas.height - ball.radius);
+      }
+
+      const leftRect = {
+        left: leftPaddle.x,
+        right: leftPaddle.x + leftPaddle.width,
+        top: leftPaddle.y,
+        bottom: leftPaddle.y + leftPaddle.height
+      };
+
+      const rightRect = {
+        left: rightPaddle.x,
+        right: rightPaddle.x + rightPaddle.width,
+        top: rightPaddle.y,
+        bottom: rightPaddle.y + rightPaddle.height
+      };
+
+      if (
+        ball.x - ball.radius <= leftRect.right &&
+        ball.x + ball.radius >= leftRect.left &&
+        ball.y >= leftRect.top &&
+        ball.y <= leftRect.bottom &&
+        ball.vx < 0
+      ) {
+        const hitPos = (ball.y - (leftPaddle.y + leftPaddle.height / 2)) / (leftPaddle.height / 2);
+        const bounceAngle = hitPos * 1.1;
+        const speed = Math.min(Math.hypot(ball.vx, ball.vy) + 18, 760);
+        ball.vx = speed * Math.cos(bounceAngle);
+        ball.vy = speed * Math.sin(bounceAngle);
+        ball.x = leftRect.right + ball.radius;
+      }
+
+      if (
+        ball.x + ball.radius >= rightRect.left &&
+        ball.x - ball.radius <= rightRect.right &&
+        ball.y >= rightRect.top &&
+        ball.y <= rightRect.bottom &&
+        ball.vx > 0
+      ) {
+        const hitPos = (ball.y - (rightPaddle.y + rightPaddle.height / 2)) / (rightPaddle.height / 2);
+        const bounceAngle = hitPos * 1.1;
+        const speed = Math.min(Math.hypot(ball.vx, ball.vy) + 18, 760);
+        ball.vx = -speed * Math.cos(bounceAngle);
+        ball.vy = speed * Math.sin(bounceAngle);
+        ball.x = rightRect.left - ball.radius;
+      }
+
+      if (ball.x < -20) {
+        state.scoreRight += 1;
+        updateScore();
+        resetBall(1);
+      }
+
+      if (ball.x > canvas.width + 20) {
+        state.scoreLeft += 1;
+        updateScore();
+        resetBall(-1);
+      }
+    }
+
+    function drawCenterLine() {
+      ctx.strokeStyle = "rgba(255,255,255,0.15)";
+      ctx.lineWidth = 4;
+      ctx.setLineDash([16, 16]);
+      ctx.beginPath();
+      ctx.moveTo(canvas.width / 2, 0);
+      ctx.lineTo(canvas.width / 2, canvas.height);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    function drawPaddle(paddle, color) {
+      ctx.fillStyle = color;
+      ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
+    }
+
+    function drawBall() {
+      ctx.fillStyle = "#fbbf24";
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      drawCenterLine();
+      drawPaddle(leftPaddle, "#f8fafc");
+      drawPaddle(rightPaddle, "#f8fafc");
+      drawBall();
+
+      ctx.fillStyle = "rgba(255,255,255,0.08)";
+      ctx.fillRect(0, 0, canvas.width, 2);
+      ctx.fillRect(0, canvas.height - 2, canvas.width, 2);
+    }
+
+    function gameLoop(timestamp) {
+      const dt = Math.min((timestamp - state.lastTime) / 1000 || 0.016, 0.024);
+
+      if (state.running && !state.paused) {
+        updatePaddles(dt);
+        updateBall(dt);
+      }
+
+      draw();
+      state.lastTime = timestamp;
+      requestAnimationFrame(gameLoop);
+    }
+
+    function handleKey(e, value) {
+      const code = e.code;
+      if (code === "KeyW") input.leftUp = value;
+      if (code === "KeyS") input.leftDown = value;
+      if (code === "ArrowUp") input.rightUp = value;
+      if (code === "ArrowDown") input.rightDown = value;
+    }
+
+    window.addEventListener("keydown", (e) => handleKey(e, true));
+    window.addEventListener("keyup", (e) => handleKey(e, false));
+
+    canvas.addEventListener("touchstart", (event) => {
+      const touch = event.touches[0];
+      const rect = canvas.getBoundingClientRect();
+      const y = touch.clientY - rect.top;
+      const middle = canvas.height / 2;
+      if (y < middle) {
+        input.leftUp = true; input.leftDown = false;
+      } else {
+        input.leftDown = true; input.leftUp = false;
+      }
+    }, { passive: true });
+
+    canvas.addEventListener("touchmove", (event) => {
+      const touch = event.touches[0];
+      const rect = canvas.getBoundingClientRect();
+      const y = touch.clientY - rect.top;
+      const middle = canvas.height / 2;
+      if (y < middle) {
+        input.leftUp = true; input.leftDown = false;
+      } else {
+        input.leftDown = true; input.leftUp = false;
+      }
+    }, { passive: true });
+
+    canvas.addEventListener("touchend", () => {
+      input.leftUp = false;
+      input.leftDown = false;
+    });
+
+    restartBtn.addEventListener("click", () => {
+      state.scoreLeft = 0;
+      state.scoreRight = 0;
+      updateScore();
+      resetBall(Math.random() > 0.5 ? 1 : -1);
+      state.paused = false;
+      pauseBtn.textContent = "Pause";
+    });
+
+    pauseBtn.addEventListener("click", () => {
+      state.paused = !state.paused;
+      pauseBtn.textContent = state.paused ? "Resume" : "Pause";
+    });
+
+    function init() {
+      updateScore();
+      resetBall(Math.random() > 0.5 ? 1 : -1);
+      requestAnimationFrame(gameLoop);
+    }
+
+    init();
+  </script>
+</body>
+</html>
